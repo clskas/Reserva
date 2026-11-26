@@ -152,7 +152,7 @@ jobs:
             SERVEUR=$!
             sleep 1
             flutter test integration_test/captures_store_test.dart --flavor client \
-              -d "$UDID" --dart-define=API_URL=http://127.0.0.1:4000/api
+              -d "$UDID" --dart-define=API_URL=http://127.0.0.1:4000/api               || echo "::warning::test en échec sur ${choix#*|} (captures déjà prises conservées)"
             kill "$SERVEUR" || true
             xcrun simctl shutdown "$UDID" || true
           done
