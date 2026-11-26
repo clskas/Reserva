@@ -30,19 +30,23 @@ Future<void> attendre(WidgetTester tester, int secondes) async {
 /// Demande la capture au serveur du workflow ; il ne répond qu'une fois l'image écrite.
 Future<void> capturer(WidgetTester tester, String nom) async {
   await attendre(tester, 2);
+  await appelerServeur(tester, '/capture?nom=$nom');
+  await tester.pump();
+}
+
+Future<void> appelerServeur(WidgetTester tester, String chemin) async {
   await tester.runAsync(() async {
     final client = HttpClient();
     try {
-      final req = await client.getUrl(Uri.parse('http://127.0.0.1:8765/capture?nom=$nom'));
+      final req = await client.getUrl(Uri.parse('http://127.0.0.1:8765$chemin'));
       final res = await req.close();
       await res.drain<void>();
       // ignore: avoid_print
-      print('capture $nom → HTTP ${res.statusCode}');
+      print('serveur $chemin → HTTP ${res.statusCode}');
     } finally {
       client.close();
     }
   });
-  await tester.pump();
 }
 
 /// Navigue avec le GoRouter de l'app (contexte = Navigator créé par le routeur).

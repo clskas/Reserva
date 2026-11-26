@@ -123,6 +123,10 @@ jobs:
           ' "$1"
           }
 
+          # Build simulateur de l'app client, installé avant le test (voir permission)
+          flutter build ios --simulator --debug --flavor client -t lib/main.dart             --dart-define=API_URL=http://127.0.0.1:4000/api
+          ls build/ios/iphonesimulator/
+
           for appareil in "iphone-69:iPhone 1[6-9] Pro Max" "ipad-13:iPad Pro 13"; do
             dossier="$GITHUB_WORKSPACE/captures/${appareil%%:*}"
             motif="${appareil#*:}"
@@ -138,6 +142,9 @@ jobs:
               --cellularMode active --cellularBars 4 \
               --batteryState charged --batteryLevel 100
             # Position à Kinshasa, autorisée d'avance (pas de fenêtre de permission sur les captures)
+            # L'app doit être installée pour que la permission tienne ; `flutter test`
+            # la réinstalle ensuite par-dessus, ce qui conserve l'autorisation.
+            xcrun simctl install "$UDID" "$(ls -d build/ios/iphonesimulator/*.app | head -1)"
             xcrun simctl location "$UDID" set -4.3217,15.3125 || true
             xcrun simctl privacy "$UDID" grant location com.reserva.client || true
             xcrun simctl privacy "$UDID" grant location-always com.reserva.client || true

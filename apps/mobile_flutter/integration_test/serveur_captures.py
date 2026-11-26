@@ -20,6 +20,16 @@ UDID, DOSSIER = sys.argv[1], sys.argv[2]
 class Gestionnaire(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
+        if url.path == "/autoriser":
+            # Appelé par le test une fois l'app installée : la permission accordée
+            # avant l'installation n'est pas prise en compte.
+            for service in ("location", "location-always"):
+                subprocess.run(["xcrun", "simctl", "privacy", UDID, "grant", service, "com.reserva.client"])
+            print("🔓 position autorisée", flush=True)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+            return
         nom = parse_qs(url.query).get("nom", [""])[0]
         if url.path != "/capture" or not re.fullmatch(r"[\w-]{1,40}", nom):
             self.send_response(400)
