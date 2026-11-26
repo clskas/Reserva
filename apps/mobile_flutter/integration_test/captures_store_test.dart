@@ -34,9 +34,16 @@ Future<void> capturer(WidgetTester tester, String nom) async {
   await attendre(tester, 6);
 }
 
-void aller(WidgetTester tester, String route, {Object? extra}) {
-  final context = tester.element(find.byType(Scaffold).first);
-  GoRouter.of(context).go(route, extra: extra);
+/// Navigue avec le GoRouter de l'app (contexte = Navigator créé par le routeur).
+Future<void> aller(WidgetTester tester, String route, {Object? extra}) async {
+  for (var i = 0; i < 30 && find.byType(Navigator).evaluate().isEmpty; i++) {
+    await attendre(tester, 1);
+  }
+  final navigateurs = find.byType(Navigator).evaluate().toList();
+  if (navigateurs.isEmpty) {
+    throw StateError('Aucun Navigator : l\'app ne s\'est pas affichée');
+  }
+  GoRouter.of(navigateurs.last).go(route, extra: extra);
 }
 
 Future<dynamic> getJson(String chemin) async {
@@ -65,13 +72,18 @@ void main() {
   testWidgets('captures App Store (mode invité)', (tester) async {
     await demarrerApp(roleForce: AppFlavor.client);
     await attendre(tester, 6); // splash → bienvenue
+    // Diagnostic : écran de départ et widgets présents (capture non utilisée)
+    final types = find.byType(Widget).evaluate().map((e) => e.widget.runtimeType.toString()).toSet();
+    // ignore: avoid_print
+    print('WIDGETS: ${types.take(60).join(', ')}');
+    await capturer(tester, '00-demarrage');
 
     // Comme un visiteur qui touche « Découvrir sans compte »
-    aller(tester, '/accueil');
+    await aller(tester, '/accueil');
     await attendre(tester, 8);
     await capturer(tester, '01-accueil');
 
-    aller(tester, '/services');
+    await aller(tester, '/services');
     await attendre(tester, 8);
     await capturer(tester, '02-services');
 
@@ -82,11 +94,11 @@ void main() {
           (s) => '${s['prestataire']?['nomEntreprise']}'.contains('Clinique'),
           orElse: () => items.first as Map<String, dynamic>,
         );
-    aller(tester, '/service/${sante['id']}');
+    await aller(tester, '/service/${sante['id']}');
     await attendre(tester, 8);
     await capturer(tester, '03-service-detail');
 
-    aller(tester, '/hotels');
+    await aller(tester, '/hotels');
     await attendre(tester, 10);
     await capturer(tester, '04-hotels');
 
@@ -94,7 +106,7 @@ void main() {
     await attendre(tester, 10);
     await capturer(tester, '05-hotel-detail');
 
-    aller(tester, '/transport');
+    await aller(tester, '/transport');
     await attendre(tester, 10);
     await capturer(tester, '06-transport');
   }, timeout: const Timeout(Duration(minutes: 10)));
