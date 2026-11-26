@@ -2,8 +2,9 @@
 //
 // Lancé par le workflow « Captures App Store » sur un simulateur iOS, contre une
 // plateforme locale remplie avec les données de démonstration du dépôt.
-// Le test affiche chaque écran puis écrit « CAPTURE:<nom> » : le workflow lit cette
-// ligne et prend la capture avec `xcrun simctl io <udid> screenshot` (vraie barre d'état iOS).
+// Le test affiche chaque écran puis appelle le petit serveur du workflow
+// (integration_test/serveur_captures.py, port 8765) qui prend la capture avec
+// `xcrun simctl io <udid> screenshot` (vraie barre d'état iOS) avant de répondre.
 //
 // flutter test integration_test/captures_store_test.dart --flavor client \
 //   -d <udid> --dart-define=API_URL=http://127.0.0.1:4000/api
@@ -26,12 +27,22 @@ Future<void> attendre(WidgetTester tester, int secondes) async {
   await tester.pump();
 }
 
-/// Demande la capture au workflow puis laisse l'écran immobile pendant qu'elle est prise.
+/// Demande la capture au serveur du workflow ; il ne répond qu'une fois l'image écrite.
 Future<void> capturer(WidgetTester tester, String nom) async {
   await attendre(tester, 2);
-  // ignore: avoid_print
-  print('CAPTURE:$nom');
-  await attendre(tester, 6);
+  await tester.runAsync(() async {
+    final client = HttpClient();
+    try {
+      final req = await client.getUrl(Uri.parse('http://127.0.0.1:8765/capture?nom=$nom'));
+      final res = await req.close();
+      await res.drain<void>();
+      // ignore: avoid_print
+      print('capture $nom → HTTP ${res.statusCode}');
+    } finally {
+      client.close();
+    }
+  });
+  await tester.pump();
 }
 
 /// Navigue avec le GoRouter de l'app (contexte = Navigator créé par le routeur).
@@ -46,7 +57,11 @@ Future<void> aller(WidgetTester tester, String route, {Object? extra}) async {
   GoRouter.of(navigateurs.last).go(route, extra: extra);
 }
 
-Future<dynamic> getJson(String chemin) async {
+Future<dynamic> getJson(WidgetTester tester, String chemin) async {
+  return tester.runAsync(() => _getJson(chemin));
+}
+
+Future<dynamic> _getJson(String chemin) async {
   final client = HttpClient();
   try {
     final req = await client.getUrl(Uri.parse('$_apiUrl$chemin'));
@@ -72,11 +87,7 @@ void main() {
   testWidgets('captures App Store (mode invité)', (tester) async {
     await demarrerApp(roleForce: AppFlavor.client);
     await attendre(tester, 6); // splash → bienvenue
-    // Diagnostic : écran de départ et widgets présents (capture non utilisée)
-    final types = find.byType(Widget).evaluate().map((e) => e.widget.runtimeType.toString()).toSet();
-    // ignore: avoid_print
-    print('WIDGETS: ${types.take(60).join(', ')}');
-    await capturer(tester, '00-demarrage');
+    await capturer(tester, '00-demarrage'); // diagnostic, non publiée
 
     // Comme un visiteur qui touche « Découvrir sans compte »
     await aller(tester, '/accueil');
@@ -88,7 +99,7 @@ void main() {
     await capturer(tester, '02-services');
 
     // Fiche d'un prestataire de santé de la démo
-    final services = await getJson('/services?limit=50');
+    final services = await getJson(tester, '/services?limit=50');
     final items = (services is Map ? services['items'] : services) as List<dynamic>;
     final sante = items.cast<Map<String, dynamic>>().firstWhere(
           (s) => '${s['prestataire']?['nomEntreprise']}'.contains('Clinique'),

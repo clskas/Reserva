@@ -123,18 +123,6 @@ jobs:
           ' "$1"
           }
 
-          capturer_flux() {
-            while IFS= read -r ligne; do
-              echo "$ligne"
-              case "$ligne" in
-                *CAPTURE:*)
-                  nom="${ligne##*CAPTURE:}"; nom="${nom%%[[:space:]]*}"
-                  xcrun simctl io "$1" screenshot --type=png "$2/$nom.png" && echo "📸 $2/$nom.png"
-                  ;;
-              esac
-            done
-          }
-
           for appareil in "iphone-69:iPhone 1[6-9] Pro Max" "ipad-13:iPad Pro 13"; do
             dossier="$GITHUB_WORKSPACE/captures/${appareil%%:*}"
             motif="${appareil#*:}"
@@ -149,9 +137,16 @@ jobs:
               --dataNetwork wifi --wifiMode active --wifiBars 3 \
               --cellularMode active --cellularBars 4 \
               --batteryState charged --batteryLevel 100
+            # Position à Kinshasa, autorisée d'avance (pas de fenêtre de permission sur les captures)
+            xcrun simctl location "$UDID" set -4.3217,15.3125 || true
+            xcrun simctl privacy "$UDID" grant location com.reserva.client || true
+            xcrun simctl privacy "$UDID" grant location-always com.reserva.client || true
+            python3 integration_test/serveur_captures.py "$UDID" "$dossier" &
+            SERVEUR=$!
+            sleep 1
             flutter test integration_test/captures_store_test.dart --flavor client \
-              -d "$UDID" --dart-define=API_URL=http://127.0.0.1:4000/api 2>&1 \
-              | capturer_flux "$UDID" "$dossier"
+              -d "$UDID" --dart-define=API_URL=http://127.0.0.1:4000/api
+            kill "$SERVEUR" || true
             xcrun simctl shutdown "$UDID" || true
           done
           find "$GITHUB_WORKSPACE/captures" -name '*.png' -exec sips -g pixelWidth -g pixelHeight {} \;
