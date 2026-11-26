@@ -33,6 +33,7 @@ env:
 jobs:
   captures:
     name: Captures iPhone + iPad
+    if: ${{ !contains(github.event.head_commit.message, '[publier ') }}
     runs-on: macos-26
     timeout-minutes: 120
     steps:
@@ -168,3 +169,45 @@ jobs:
           name: captures-app-store
           path: captures
           retention-days: 14
+
+  # Commit contenant « [publier <id du run de captures>] » : envoie les captures de ce run
+  # dans App Store Connect (RESERVA 1.0.11, langue fr-FR), en remplaçant les anciennes.
+  # Ne soumet rien à l'examen.
+  publier:
+    name: Publier les captures (App Store Connect)
+    if: ${{ contains(github.event.head_commit.message, '[publier ') }}
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: apps/mobile_flutter/ios
+    env:
+      ASC_APP_VERSION: "1.0.11"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+      - name: Récupérer les captures du run indiqué
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          RUN_ID=$(printf '%s' "$MESSAGE" | sed -nE 's/.*\[publier ([0-9]+)\].*/\1/p')
+          test -n "$RUN_ID" || { echo "id de run introuvable dans le message"; exit 1; }
+          gh run download "$RUN_ID" --repo "${{ github.repository }}" -n captures-app-store -D /tmp/brutes
+          mkdir -p /tmp/asc/fr-FR
+          # 00-demarrage = diagnostic, jamais publié
+          for f in /tmp/brutes/iphone-69/0[1-9]*.png; do cp "$f" "/tmp/asc/fr-FR/iphone69-$(basename "$f")"; done
+          for f in /tmp/brutes/ipad-13/0[1-9]*.png; do cp "$f" "/tmp/asc/fr-FR/ipad13-$(basename "$f")"; done
+          ls -la /tmp/asc/fr-FR
+      - name: Envoyer dans App Store Connect
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          CAPTURES_DIR: /tmp/asc
+        run: |
+          mkdir -p fastlane
+          printf '%s' "$APP_STORE_CONNECT_API_KEY_P8" > fastlane/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8
+          gem install fastlane --no-document
+          fastlane captures
