@@ -1,0 +1,168 @@
+name: Captures App Store
+
+# Captures réelles de l'app RESERVA (client) sur simulateurs iPhone 6,9" et iPad 13",
+# en mode invité, contre une plateforme locale remplie avec les données de démo.
+# Résultat : artefact « captures-app-store » (PNG prêts pour App Store Connect).
+# Ne publie rien.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["captures/**"]
+
+concurrency:
+  group: captures-app-store-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  DATABASE_URL_CORE: postgresql://reserva:reserva@localhost:5432/reserva?schema=core
+  DATABASE_URL_HOTELS: postgresql://reserva:reserva@localhost:5432/reserva?schema=hotels
+  DATABASE_URL_BOOKING: postgresql://reserva:reserva@localhost:5432/reserva?schema=booking
+  DATABASE_URL_TRANSPORT: postgresql://reserva:reserva@localhost:5432/reserva?schema=transport
+  REDIS_URL: redis://localhost:6379
+  JWT_SECRET: captures-jwt-secret-local-only
+  SERVICE_SECRET: captures-service-secret
+  CRON_SECRET: captures-cron-secret
+  MODE_PAIEMENT: simulation
+  MODE_SMS: simulation
+  AFRISOFT_HUB_WEBHOOK_SECRET: captures-webhook-secret
+  AFRISOFT_HUB_APP_ID: reserva
+  MIGRATE_FALLBACK_PUSH: "1"
+
+jobs:
+  captures:
+    name: Captures iPhone + iPad
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode 26
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app && xcodebuild -version
+
+      - name: Postgres + Redis
+        run: |
+          brew install postgresql@16 redis >/dev/null
+          brew services start postgresql@16
+          brew services start redis
+          PG=/opt/homebrew/opt/postgresql@16/bin
+          for i in $(seq 1 30); do "$PG/pg_isready" -h localhost && break; sleep 2; done
+          "$PG/psql" -h localhost -d postgres -c "CREATE ROLE reserva LOGIN SUPERUSER PASSWORD 'reserva';"
+          "$PG/createdb" -h localhost -O reserva reserva
+          PGPASSWORD=reserva "$PG/psql" -h localhost -U reserva -d reserva -f scripts/init-postgres.sql
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Bases de démo + builds
+        run: |
+          npm ci
+          npm run build:shared
+          npm run db:generate
+          npm run db:generate:hotels
+          npm run db:generate:booking
+          npm run db:generate:transport
+          DATABASE_URL="$DATABASE_URL_CORE" npm run db:migrate:core
+          DATABASE_URL="$DATABASE_URL_CORE" npm run db:seed
+          DATABASE_URL="$DATABASE_URL_HOTELS" npm run db:migrate:hotels
+          DATABASE_URL="$DATABASE_URL_HOTELS" npm run db:seed:hotels
+          DATABASE_URL="$DATABASE_URL_BOOKING" npm run db:migrate:booking
+          DATABASE_URL="$DATABASE_URL_TRANSPORT" npm run db:migrate:transport
+          DATABASE_URL="$DATABASE_URL_TRANSPORT" npm run db:seed:transport
+          npm run build:api
+          npm run build -w @reserva/hotels
+          npm run build -w @reserva/booking
+          npm run build -w @reserva/transport
+          npm run build -w @reserva/gateway
+
+      - name: Démarrer plateforme
+        run: |
+          node scripts/ci-start-platform.mjs > /tmp/platform.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:4000/api/sante >/dev/null; then
+              echo "Gateway prêt"
+              curl -s "http://127.0.0.1:4000/api/services?limit=3" | head -c 300; echo
+              exit 0
+            fi
+            sleep 2
+          done
+          tail -n 200 /tmp/platform.log || true
+          exit 1
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.32.6"
+          cache: true
+
+      - name: Flutter pub get + CocoaPods
+        working-directory: apps/mobile_flutter
+        run: |
+          flutter pub get
+          flutter precache --ios
+          cd ios && pod install --repo-update
+
+      - name: Captures
+        working-directory: apps/mobile_flutter
+        run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/captures"
+          xcrun simctl list devices available
+
+          choisir() {
+            xcrun simctl list devices available -j | python3 -c '
+          import json, re, sys
+          motif = sys.argv[1]
+          d = json.load(sys.stdin)["devices"]
+          c = [(k, x) for k, v in d.items() if "iOS" in k for x in v if re.search(motif, x["name"])]
+          c.sort(key=lambda t: (t[0], t[1]["name"]))
+          print(c[-1][1]["udid"] + "|" + c[-1][1]["name"]) if c else sys.exit("aucun simulateur pour " + motif)
+          ' "$1"
+          }
+
+          capturer_flux() {
+            while IFS= read -r ligne; do
+              echo "$ligne"
+              case "$ligne" in
+                *CAPTURE:*)
+                  nom="${ligne##*CAPTURE:}"; nom="${nom%%[[:space:]]*}"
+                  xcrun simctl io "$1" screenshot --type=png "$2/$nom.png" && echo "📸 $2/$nom.png"
+                  ;;
+              esac
+            done
+          }
+
+          for appareil in "iphone-69:iPhone 1[6-9] Pro Max" "ipad-13:iPad Pro 13"; do
+            dossier="$GITHUB_WORKSPACE/captures/${appareil%%:*}"
+            motif="${appareil#*:}"
+            mkdir -p "$dossier"
+            choix=$(choisir "$motif")
+            UDID="${choix%%|*}"
+            echo "=== ${choix#*|} ($UDID) → $dossier ==="
+            xcrun simctl boot "$UDID" || true
+            xcrun simctl bootstatus "$UDID" -b
+            xcrun simctl ui "$UDID" appearance light || true
+            xcrun simctl status_bar "$UDID" override --time "9:41" \
+              --dataNetwork wifi --wifiMode active --wifiBars 3 \
+              --cellularMode active --cellularBars 4 \
+              --batteryState charged --batteryLevel 100
+            flutter test integration_test/captures_store_test.dart --flavor client \
+              -d "$UDID" --dart-define=API_URL=http://127.0.0.1:4000/api 2>&1 \
+              | capturer_flux "$UDID" "$dossier"
+            xcrun simctl shutdown "$UDID" || true
+          done
+          find "$GITHUB_WORKSPACE/captures" -name '*.png' -exec sips -g pixelWidth -g pixelHeight {} \;
+
+      - name: Logs plateforme (échec)
+        if: failure()
+        run: tail -n 200 /tmp/platform.log || true
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: captures-app-store
+          path: captures
+          retention-days: 14
