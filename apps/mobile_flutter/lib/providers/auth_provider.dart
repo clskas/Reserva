@@ -74,7 +74,12 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Lancement pour les captures App Store (workflow) : pas de demande de permission
+  /// de notifications, qui bloquerait l'écran. Toujours faux dans les builds normaux.
+  static const _modeCaptures = bool.fromEnvironment('CAPTURES');
+
   Future<void> _demarrerAlertesSiPro() async {
+    if (_modeCaptures) return;
     if (!AppFlavorConfig.estPrestataire && !estPrestataire) return;
     await AlerteReservationWatcher().demarrer();
   }

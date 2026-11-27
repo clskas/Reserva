@@ -141,7 +141,7 @@ jobs:
               cible=lib/main_pro.dart; bundle=com.reserva.pro; test=captures_pro_test.dart; prefixe="pro-"
             fi
             # Build simulateur installé avant le test (permission de position conservée)
-            flutter build ios --simulator --debug --flavor "$app" -t "$cible" --dart-define=API_URL=http://127.0.0.1:4000/api
+            flutter build ios --simulator --debug --flavor "$app" -t "$cible" --dart-define=API_URL=http://127.0.0.1:4000/api --dart-define=CAPTURES=true
             appli="$(ls -d build/ios/iphonesimulator/*.app | head -1)"
 
             for appareil in "iphone-69:iPhone 1[6-9] Pro Max" "ipad-13:iPad Pro 13"; do
@@ -162,7 +162,7 @@ jobs:
               python3 integration_test/serveur_captures.py "$UDID" "$dossier" &
               SERVEUR=$!
               sleep 1
-              flutter test "integration_test/$test" --flavor "$app" -d "$UDID" --dart-define=API_URL=http://127.0.0.1:4000/api || echo "::warning::test $app en échec sur ${choix#*|} (captures déjà prises conservées)"
+              flutter test "integration_test/$test" --flavor "$app" -d "$UDID" --dart-define=API_URL=http://127.0.0.1:4000/api --dart-define=CAPTURES=true || echo "::warning::test $app en échec sur ${choix#*|} (captures déjà prises conservées)"
               kill "$SERVEUR" || true
               xcrun simctl shutdown "$UDID" || true
             done
