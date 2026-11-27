@@ -80,7 +80,7 @@ platform :ios do
     )
     deliver(
       api_key: api_key,
-      app_identifier: "com.reserva.client",
+      app_identifier: ENV.fetch("ASC_APP_IDENTIFIER", "com.reserva.client"),
       app_version: ENV.fetch("ASC_APP_VERSION"),
       skip_binary_upload: true,
       skip_metadata: true,
