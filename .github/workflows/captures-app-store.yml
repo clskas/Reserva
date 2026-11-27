@@ -216,6 +216,8 @@ jobs:
           # 00-demarrage = diagnostic, jamais publié
           for f in /tmp/brutes/${PREFIXE}iphone-69/0[1-9]*.png; do cp "$f" "/tmp/asc/fr-FR/iphone69-$(basename "$f")"; done
           for f in /tmp/brutes/${PREFIXE}ipad-13/0[1-9]*.png; do cp "$f" "/tmp/asc/fr-FR/ipad13-$(basename "$f")"; done
+          # Calendrier de démo presque vide : pas publié
+          rm -f /tmp/asc/fr-FR/*calendrier*
           echo "→ $BUNDLE $VERSION"; ls -la /tmp/asc/fr-FR
       - name: Envoyer dans App Store Connect
         env:
